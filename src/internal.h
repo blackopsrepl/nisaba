@@ -93,4 +93,25 @@ int  model_history(Model *m, const void *key, size_t klen, nis_history_cb cb, vo
 int  model_schisms(Model *m, const void *key, size_t klen, nis_history_cb cb, void *ud);
 const Record *model_record(const Model *m, uint64_t id);
 
+/* ------------------------------------------------------------------ */
+/* Paged B+tree index snapshot                                        */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    Buf      data;       /* whole index file; page 0 is the header */
+    uint32_t page_count;
+    uint64_t root_page;
+    uint64_t log_offset;
+    uint64_t log_lsn;
+    uint64_t generation;
+} BTree;
+
+int  btree_build(const char *path, const Index *ix, uint64_t log_offset,
+                 uint64_t log_lsn, uint64_t generation);
+int  btree_open(BTree *bt, const char *path);
+void btree_close(BTree *bt);
+int  btree_get(BTree *bt, const void *key, size_t klen, KeyState *out);
+int  btree_scan(BTree *bt, const void *prefix, size_t plen, size_t limit,
+                nis_scan_cb cb, void *ud);
+
 #endif /* NISABA_INTERNAL_H */

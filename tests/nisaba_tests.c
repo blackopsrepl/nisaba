@@ -268,6 +268,14 @@ static int hist_cb(void *ud, const Record *r)
     return NIS_OK;
 }
 
+static int scan_cb(void *ud, const Buf *key, const KeyState *st)
+{
+    (void)key;
+    (void)st;
+    (*(int *)ud)++;
+    return NIS_OK;
+}
+
 static uint64_t canon_id(Model *m, const char *k)
 {
     KeyState st;
@@ -328,6 +336,65 @@ static void test_model(void)
     model_free(&m);
 }
 
+static void test_btree(void)
+{
+    const char *p = "tests/tmp_idx.idx";
+    remove(p);
+
+    Index ix;
+    index_init(&ix);
+    enum { N = 500 };
+    char kb[32];
+    for (int i = N - 1; i >= 0; i--) { /* insert out of order */
+        snprintf(kb, sizeof kb, "k%04d", i);
+        KeyEntry *e = index_insert(&ix, kb, strlen(kb));
+        CHECK(e != NULL);
+        e->st.head_lsn = (uint64_t)(i + 1);
+        e->st.head_count = 1;
+        e->st.flags = 0;
+    }
+    CHECK(ix.n == N);
+
+    CHECK(btree_build(p, &ix, 1234, 500, 7) == NIS_OK);
+
+    BTree bt;
+    CHECK(btree_open(&bt, p) == NIS_OK);
+    CHECK(bt.log_offset == 1234);
+    CHECK(bt.log_lsn == 500);
+    CHECK(bt.generation == 7);
+    CHECK(bt.root_page != 0);
+
+    for (int i = 0; i < N; i++) {
+        snprintf(kb, sizeof kb, "k%04d", i);
+        KeyState st;
+        CHECK(btree_get(&bt, kb, strlen(kb), &st) == NIS_OK);
+        CHECK(st.head_lsn == (uint64_t)(i + 1));
+    }
+    KeyState st;
+    CHECK(btree_get(&bt, "nope", 4, &st) == NIS_NOTFOUND);
+
+    int n = 0;
+    CHECK(btree_scan(&bt, "k01", 3, 0, scan_cb, &n) == NIS_OK);
+    CHECK(n == 100);
+    n = 0;
+    CHECK(btree_scan(&bt, "k", 1, 10, scan_cb, &n) == NIS_OK);
+    CHECK(n == 10);
+    n = 0;
+    CHECK(btree_scan(&bt, "zzz", 3, 0, scan_cb, &n) == NIS_OK);
+    CHECK(n == 0);
+    btree_close(&bt);
+    index_free(&ix);
+
+    /* An empty index is a valid, empty tree. */
+    index_init(&ix);
+    CHECK(btree_build(p, &ix, 0, 0, 1) == NIS_OK);
+    CHECK(btree_open(&bt, p) == NIS_OK);
+    CHECK(btree_get(&bt, "x", 1, &st) == NIS_NOTFOUND);
+    btree_close(&bt);
+    index_free(&ix);
+    remove(p);
+}
+
 int main(void)
 {
     test_buf();
@@ -336,6 +403,7 @@ int main(void)
     test_codec();
     test_log();
     test_model();
+    test_btree();
 
     printf("tests: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
