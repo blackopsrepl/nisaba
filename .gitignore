@@ -1,0 +1,17 @@
+# Design notes are local working material, not part of the source tree.
+PLAN.md
+
+# Build artifacts
+*.o
+*.a
+/nisaba
+/tests/nisaba_tests
+
+# Runtime artifacts from tests and ad-hoc use
+*.db
+*.db.idx
+*.db.bak
+*.db.tmp
+*.idx
+*.bak
+*.tmp
