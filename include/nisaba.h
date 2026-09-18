@@ -124,6 +124,46 @@ typedef struct {
 typedef int (*nis_history_cb)(void *ud, const Record *r);
 typedef int (*nis_scan_cb)(void *ud, const Buf *key, const KeyState *st);
 
+/* ------------------------------------------------------------------ */
+/* Archive                                                            */
+/* ------------------------------------------------------------------ */
+
+typedef struct Nisaba Nisaba;
+
+/* Open or create an archive. create != 0 creates a missing file. */
+int  nis_open(const char *path, int create, Nisaba **out);
+void nis_close(Nisaba *db);
+
+/* Append a claim. The record's id field is assigned by the archive. */
+int  nis_inscribe(Nisaba *db, const Record *in, uint64_t *id_out);
+
+/* Current accepted value, or NIS_SCHISM when several heads compete. */
+int  nis_canon(Nisaba *db, const void *key, size_t klen,
+               KeyState *st, const Record **head_out);
+int  nis_canon_asof(Nisaba *db, const void *key, size_t klen, uint64_t asof,
+                    KeyState *st, const Record **head_out);
+
+/* Withdraw a prior inscription. */
+int  nis_retract(Nisaba *db, uint64_t id, uint64_t *new_id);
+
+/* Full chain of records for a key, oldest first. */
+int  nis_history(Nisaba *db, const void *key, size_t klen,
+                 nis_history_cb cb, void *ud);
+int  nis_schisms(Nisaba *db, const void *key, size_t klen,
+                 nis_history_cb cb, void *ud);
+
+/* Ordered key scan over a prefix. */
+int  nis_scan(Nisaba *db, const void *prefix, size_t plen, size_t limit,
+              nis_scan_cb cb, void *ud);
+
+/* Rewrite the disposable index snapshot. */
+int  nis_checkpoint(Nisaba *db);
+int  nis_verify(Nisaba *db);
+
+uint64_t nis_next_id(const Nisaba *db);
+size_t   nis_record_count(const Nisaba *db);
+const char *nis_index_path(const Nisaba *db);
+
 #ifdef __cplusplus
 }
 #endif

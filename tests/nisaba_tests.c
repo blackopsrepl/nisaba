@@ -395,6 +395,99 @@ static void test_btree(void)
     remove(p);
 }
 
+static int put(Nisaba *db, const char *k, const char *v, uint64_t *id)
+{
+    Record r;
+    record_init(&r);
+    r.op = RECORD_PUT;
+    r.vtype = VAL_STR;
+    buf_set(&r.key, k, strlen(k));
+    buf_set(&r.value, v, strlen(v));
+    int rc = nis_inscribe(db, &r, id);
+    record_free(&r);
+    return rc;
+}
+
+static void test_db(void)
+{
+    const char *p = "tests/tmp_db.db";
+    remove(p);
+    remove("tests/tmp_db.db.idx");
+
+    Nisaba *db = NULL;
+    CHECK(nis_open(p, 1, &db) == NIS_OK);
+    CHECK(db != NULL);
+
+    uint64_t id1 = 0, id2 = 0;
+    CHECK(put(db, "project.status", "active", &id1) == NIS_OK);
+    CHECK(id1 == 1);
+    CHECK(put(db, "project.status", "paused", &id2) == NIS_OK);
+    CHECK(id2 == 2);
+
+    KeyState st;
+    const Record *head = NULL;
+    CHECK(nis_canon(db, "project.status", 14, &st, &head) == NIS_OK);
+    CHECK(head->id == 2);
+    CHECK(buf_eq(&head->value, "paused"));
+    CHECK(st.head_count == 1);
+
+    /* A competing claim is surfaced, not silently resolved. */
+    Record cf;
+    record_init(&cf);
+    cf.op = RECORD_PUT;
+    cf.vtype = VAL_STR;
+    cf.fork = 1;
+    buf_set(&cf.key, "project.status", 14);
+    buf_set(&cf.value, "archived", 8);
+    CHECK(nis_inscribe(db, &cf, NULL) == NIS_OK);
+    record_free(&cf);
+    CHECK(nis_canon(db, "project.status", 14, &st, &head) == NIS_SCHISM);
+    CHECK(st.head_count == 2);
+
+    /* Retracting the competing head restores a single Canon. */
+    CHECK(nis_retract(db, 3, NULL) == NIS_OK);
+    CHECK(nis_canon(db, "project.status", 14, &st, &head) == NIS_OK);
+    CHECK(head->id == 2);
+
+    int n = 0;
+    CHECK(nis_history(db, "project.status", 14, hist_cb, &n) == NIS_OK);
+    CHECK(n == 4);
+
+    put(db, "user.name", "Vittorio", NULL);
+    n = 0;
+    CHECK(nis_scan(db, "", 0, 0, scan_cb, &n) == NIS_OK);
+    CHECK(n == 2);
+    n = 0;
+    CHECK(nis_scan(db, "project.", 8, 0, scan_cb, &n) == NIS_OK);
+    CHECK(n == 1);
+
+    CHECK(nis_checkpoint(db) == NIS_OK);
+    CHECK(nis_verify(db) == NIS_OK);
+    n = 0;
+    CHECK(nis_scan(db, "", 0, 0, scan_cb, &n) == NIS_OK); /* via B+tree */
+    CHECK(n == 2);
+
+    nis_close(db);
+
+    /* Reopen: state is reconstructed from the log alone. */
+    db = NULL;
+    CHECK(nis_open(p, 0, &db) == NIS_OK);
+    CHECK(nis_record_count(db) == 5);
+    CHECK(nis_canon(db, "project.status", 14, &st, &head) == NIS_OK);
+    CHECK(buf_eq(&head->value, "paused"));
+    nis_close(db);
+
+    /* The index is disposable: delete it and Canon still resolves. */
+    remove("tests/tmp_db.db.idx");
+    db = NULL;
+    CHECK(nis_open(p, 0, &db) == NIS_OK);
+    CHECK(nis_canon(db, "project.status", 14, &st, &head) == NIS_OK);
+    CHECK(buf_eq(&head->value, "paused"));
+    nis_close(db);
+
+    remove(p);
+}
+
 int main(void)
 {
     test_buf();
@@ -404,6 +497,7 @@ int main(void)
     test_log();
     test_model();
     test_btree();
+    test_db();
 
     printf("tests: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
