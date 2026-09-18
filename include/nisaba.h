@@ -164,6 +164,9 @@ uint64_t nis_next_id(const Nisaba *db);
 size_t   nis_record_count(const Nisaba *db);
 const char *nis_index_path(const Nisaba *db);
 
+/* Direct access to a record by id, or NULL when it does not exist. */
+const Record *nis_record(const Nisaba *db, uint64_t id);
+
 #ifdef __cplusplus
 }
 #endif

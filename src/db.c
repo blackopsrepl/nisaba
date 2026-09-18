@@ -212,3 +212,8 @@ const char *nis_index_path(const Nisaba *db)
 {
     return db->idx_path;
 }
+
+const Record *nis_record(const Nisaba *db, uint64_t id)
+{
+    return model_record(&db->model, id);
+}
