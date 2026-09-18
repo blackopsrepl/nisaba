@@ -1,4 +1,5 @@
 #include "nisaba.h"
+#include "internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,11 +78,89 @@ static void test_crc(void)
     buf_free(&b);
 }
 
+static int buf_eq(const Buf *b, const char *s)
+{
+    return b->len == strlen(s) && memcmp(b->data, s, b->len) == 0;
+}
+
+static void test_codec(void)
+{
+    Record r;
+    record_init(&r);
+    r.id = 7;
+    r.op = RECORD_PUT;
+    r.vtype = VAL_STR;
+    r.recorded_at = 1699999999;
+    buf_set(&r.key, "project.status", 14);
+    buf_set(&r.value, "active", 6);
+    buf_set(&r.witness, "user", 4);
+    buf_set(&r.source, "cli", 3);
+    r.supersedes = 3;
+    r.fork = 1;
+
+    Buf body;
+    buf_init(&body);
+    CHECK(codec_encode_body(&r, &body) == NIS_OK);
+    CHECK(body.len > 0);
+
+    Record d;
+    CHECK(codec_decode_body(body.data, body.len, &d) == NIS_OK);
+    CHECK(d.id == 0); /* id/offset live in the frame, not the body */
+    CHECK(d.op == RECORD_PUT);
+    CHECK(d.vtype == VAL_STR);
+    CHECK(d.recorded_at == 1699999999);
+    CHECK(d.supersedes == 3);
+    CHECK(d.fork == 1);
+    CHECK(d.valid_time == NIS_VALID_TIME_UNSET);
+    CHECK(buf_eq(&d.key, "project.status"));
+    CHECK(buf_eq(&d.value, "active"));
+    CHECK(buf_eq(&d.witness, "user"));
+    CHECK(buf_eq(&d.source, "cli"));
+    record_free(&d);
+
+    /* A retraction body. */
+    Record ret;
+    record_init(&ret);
+    ret.op = RECORD_RETRACT;
+    ret.target = 7;
+    buf_set(&ret.key, "project.status", 14);
+    Buf rb;
+    buf_init(&rb);
+    CHECK(codec_encode_body(&ret, &rb) == NIS_OK);
+    Record rd;
+    CHECK(codec_decode_body(rb.data, rb.len, &rd) == NIS_OK);
+    CHECK(rd.op == RECORD_RETRACT && rd.target == 7);
+    CHECK(buf_eq(&rd.key, "project.status"));
+    record_free(&rd);
+    buf_free(&rb);
+    record_free(&ret);
+
+    /* Unknown tags are skipped, not rejected. */
+    Buf ext;
+    buf_init(&ext);
+    CHECK(buf_append(&ext, body.data, body.len) == NIS_OK);
+    CHECK(buf_put_u8(&ext, 0x7f) == NIS_OK);
+    CHECK(buf_put_u8(&ext, 0x00) == NIS_OK);
+    Record x;
+    CHECK(codec_decode_body(ext.data, ext.len, &x) == NIS_OK);
+    CHECK(buf_eq(&x.key, "project.status"));
+    record_free(&x);
+    buf_free(&ext);
+
+    /* A truncated body is corrupt, not a crash. */
+    Record t;
+    CHECK(codec_decode_body(body.data, body.len - 1, &t) == NIS_CORRUPT);
+
+    buf_free(&body);
+    record_free(&r);
+}
+
 int main(void)
 {
     test_buf();
     test_varint();
     test_crc();
+    test_codec();
 
     printf("tests: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

@@ -1,5 +1,5 @@
 CC      ?= cc
-CFLAGS  ?= -std=c11 -Wall -Wextra -Werror -g -O2 -Iinclude
+CFLAGS  ?= -std=c11 -Wall -Wextra -Werror -g -O2 -Iinclude -Isrc
 LDFLAGS ?=
 
 SRC     := $(wildcard src/*.c)
