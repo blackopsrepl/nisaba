@@ -244,6 +244,90 @@ static void test_log(void)
     remove(p);
 }
 
+static void apply_rec(Model *m, uint64_t id, const char *k, const char *v,
+                      uint64_t sup, int fork, uint64_t retract)
+{
+    Record r;
+    record_init(&r);
+    r.id = id;
+    r.op = retract ? RECORD_RETRACT : RECORD_PUT;
+    r.vtype = VAL_STR;
+    r.supersedes = sup;
+    r.fork = (uint8_t)(fork ? 1 : 0);
+    r.target = retract;
+    buf_set(&r.key, k, strlen(k));
+    buf_set(&r.value, v, strlen(v));
+    CHECK(model_apply(m, &r) == NIS_OK);
+    record_free(&r);
+}
+
+static int hist_cb(void *ud, const Record *r)
+{
+    (void)r;
+    (*(int *)ud)++;
+    return NIS_OK;
+}
+
+static uint64_t canon_id(Model *m, const char *k)
+{
+    KeyState st;
+    const Record *head = NULL;
+    int rc = model_canon(m, k, strlen(k), &st, &head);
+    if (rc == NIS_OK)
+        return head->id;
+    return 0;
+}
+
+static void test_model(void)
+{
+    Model m;
+    model_init(&m);
+
+    apply_rec(&m, 1, "x", "a", 0, 0, 0);
+    CHECK(canon_id(&m, "x") == 1);
+
+    /* Implicit supersession: the sole head is replaced. */
+    apply_rec(&m, 2, "x", "b", 0, 0, 0);
+    CHECK(canon_id(&m, "x") == 2);
+
+    /* Explicit supersession of the current head. */
+    apply_rec(&m, 3, "x", "c", 2, 0, 0);
+    CHECK(canon_id(&m, "x") == 3);
+
+    /* A fork adds a competing head: schism. */
+    apply_rec(&m, 4, "x", "d", 0, 1, 0);
+    KeyState st;
+    const Record *head = NULL;
+    CHECK(model_canon(&m, "x", 1, &st, &head) == NIS_SCHISM);
+    CHECK(st.head_count == 2);
+    CHECK((st.flags & KEY_FLAG_SCHISM) != 0);
+
+    /* Retracting one head resolves the schism. */
+    apply_rec(&m, 5, "", "", 0, 0, 4);
+    CHECK(canon_id(&m, "x") == 3);
+
+    /* Retracting the last head leaves no live claim. */
+    apply_rec(&m, 6, "", "", 0, 0, 3);
+    CHECK(model_canon(&m, "x", 1, &st, &head) == NIS_NOTFOUND);
+    CHECK(st.head_count == 0);
+
+    /* Time travel sees the value as of an earlier log position. */
+    CHECK(model_canon_asof(&m, "x", 1, 2, &st, &head) == NIS_OK);
+    CHECK(head->id == 2);
+
+    /* Independent keys do not interfere. */
+    apply_rec(&m, 7, "y", "one", 0, 0, 0);
+    CHECK(canon_id(&m, "y") == 7);
+    CHECK(canon_id(&m, "x") == 0);
+
+    /* History is the full chain, in log order. */
+    int n = 0;
+    CHECK(model_history(&m, "x", 1, hist_cb, &n) == NIS_OK);
+    CHECK(n == 6);
+
+    model_free(&m);
+}
+
 int main(void)
 {
     test_buf();
@@ -251,6 +335,7 @@ int main(void)
     test_crc();
     test_codec();
     test_log();
+    test_model();
 
     printf("tests: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

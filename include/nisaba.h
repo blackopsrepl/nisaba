@@ -73,6 +73,57 @@ int    varint_get(const uint8_t *p, size_t n, uint64_t *out, size_t *used);
 
 uint32_t crc32c(uint32_t crc, const void *data, size_t len);
 
+/* ------------------------------------------------------------------ */
+/* Record model                                                       */
+/* ------------------------------------------------------------------ */
+
+#define NIS_VALID_TIME_UNSET INT64_MIN
+
+typedef enum {
+    VAL_NULL   = 0,
+    VAL_BOOL   = 1,
+    VAL_INT    = 2,
+    VAL_DOUBLE = 3,
+    VAL_STR    = 4,
+    VAL_BYTES  = 5
+} ValueType;
+
+typedef enum {
+    RECORD_PUT     = 0,
+    RECORD_RETRACT = 1
+} RecordOp;
+
+typedef struct {
+    uint64_t id;          /* log sequence number; == inscription id */
+    uint64_t supersedes;  /* lsn of predecessor, 0 = none */
+    uint64_t target;      /* retraction target, 0 = none */
+    uint64_t offset;      /* byte offset in the log (filled on scan) */
+    uint8_t  op;          /* RecordOp */
+    uint8_t  fork;        /* do not auto-link to the current head */
+    uint8_t  vtype;       /* ValueType */
+    int64_t  valid_time;  /* NIS_VALID_TIME_UNSET when unset */
+    int64_t  recorded_at; /* wall clock, informational only */
+    Buf key;
+    Buf value;
+    Buf witness;
+    Buf source;
+} Record;
+
+void record_init(Record *r);
+void record_free(Record *r);
+int  record_copy(Record *dst, const Record *src);
+
+/* Derived canon state for a key. head_count == 0 means "no live claim". */
+typedef struct {
+    uint64_t head_lsn;
+    uint32_t head_count;
+    uint8_t  flags;
+} KeyState;
+
+/* Iteration callbacks: return NIS_OK to continue, anything else to stop. */
+typedef int (*nis_history_cb)(void *ud, const Record *r);
+typedef int (*nis_scan_cb)(void *ud, const Buf *key, const KeyState *st);
+
 #ifdef __cplusplus
 }
 #endif

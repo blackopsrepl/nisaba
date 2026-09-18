@@ -6,46 +6,6 @@
 #include <stdio.h>
 
 /* ------------------------------------------------------------------ */
-/* Record model                                                       */
-/* ------------------------------------------------------------------ */
-
-#define NIS_VALID_TIME_UNSET INT64_MIN
-
-typedef enum {
-    VAL_NULL   = 0,
-    VAL_BOOL   = 1,
-    VAL_INT    = 2,
-    VAL_DOUBLE = 3,
-    VAL_STR    = 4,
-    VAL_BYTES  = 5
-} ValueType;
-
-typedef enum {
-    RECORD_PUT     = 0,
-    RECORD_RETRACT = 1
-} RecordOp;
-
-typedef struct {
-    uint64_t id;          /* log sequence number; == inscription id */
-    uint64_t supersedes;  /* lsn of predecessor, 0 = none */
-    uint64_t target;      /* retraction target, 0 = none */
-    uint64_t offset;      /* byte offset in the log (filled on scan) */
-    uint8_t  op;          /* RecordOp */
-    uint8_t  fork;        /* do not auto-link to the current head */
-    uint8_t  vtype;       /* ValueType */
-    int64_t  valid_time;  /* NIS_VALID_TIME_UNSET when unset */
-    int64_t  recorded_at; /* wall clock, informational only */
-    Buf key;
-    Buf value;
-    Buf witness;
-    Buf source;
-} Record;
-
-void record_init(Record *r);
-void record_free(Record *r);
-int  record_copy(Record *dst, const Record *src);
-
-/* ------------------------------------------------------------------ */
 /* TLV body codec                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -84,5 +44,53 @@ void log_close(Log *l);
 int  log_append(Log *l, const Record *r, uint64_t *offset_out);
 int  log_scan(Log *l, int (*cb)(void *ud, const Record *r, uint64_t off), void *ud);
 int  log_read_record(Log *l, uint64_t offset, Record *out);
+
+/* ------------------------------------------------------------------ */
+/* In-memory ordered index                                            */
+/* ------------------------------------------------------------------ */
+
+#define KEY_FLAG_SCHISM 0x01u
+
+typedef struct {
+    uint64_t *ids;  /* lsns of every record for this key, ascending */
+    size_t    n;
+    size_t    cap;
+    KeyState  st;   /* derived canon state */
+} KeyEntry;
+
+typedef struct {
+    Buf      *keys; /* sorted by memcmp, then length */
+    KeyEntry *ents;
+    size_t    n;
+    size_t    cap;
+} Index;
+
+void       index_init(Index *ix);
+void       index_free(Index *ix);
+KeyEntry  *index_find(Index *ix, const void *key, size_t klen);
+KeyEntry  *index_insert(Index *ix, const void *key, size_t klen);
+size_t     index_lower_bound(const Index *ix, const void *key, size_t klen);
+int        key_cmp(const void *a, size_t alen, const void *b, size_t blen);
+
+/* ------------------------------------------------------------------ */
+/* Record model: supersession fold over the log                       */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    Index   ix;
+    Record *recs;   /* recs[lsn - 1] */
+    size_t  n_recs;
+    size_t  cap_recs;
+} Model;
+
+void model_init(Model *m);
+void model_free(Model *m);
+int  model_apply(Model *m, const Record *r);
+int  model_canon(Model *m, const void *key, size_t klen, KeyState *st, const Record **head);
+int  model_canon_asof(Model *m, const void *key, size_t klen, uint64_t asof,
+                      KeyState *st, const Record **head);
+int  model_history(Model *m, const void *key, size_t klen, nis_history_cb cb, void *ud);
+int  model_schisms(Model *m, const void *key, size_t klen, nis_history_cb cb, void *ud);
+const Record *model_record(const Model *m, uint64_t id);
 
 #endif /* NISABA_INTERNAL_H */
