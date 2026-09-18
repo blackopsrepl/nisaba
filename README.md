@@ -22,6 +22,77 @@ nisaba> history project.status
 2  "paused"  supersedes=1
 ```
 
+## Schisms: competing claims are never hidden
+
+Most databases silently resolve a conflict by overwriting: last write wins.
+Nisaba refuses to do that. A new write normally supersedes the current head,
+but `--fork` records a *competing* claim instead. A key with two or more live
+heads is a **schism**, and every read of that key reports it rather than
+guessing:
+
+```text
+nisaba> inscribe project.owner "alice"
+1
+
+nisaba> inscribe project.owner "bob" --fork
+2
+
+nisaba> canon project.owner
+schism: 2 competing claims
+$ echo $?
+4
+
+nisaba> schisms project.owner
+1  "alice"
+2  "bob"
+
+nisaba> history project.owner
+1  "alice"
+2  "bob"
+```
+
+`canon` returns exit code `4` and prints no value, so a script or agent cannot
+mistake a schism for one. The diagnostic goes to stderr; stdout carries only
+the machine-readable form. With `--json` that is an explicit `"schism":true`
+object:
+
+```console
+$ nisaba --json memory.db canon project.owner 2>/dev/null
+{"key":"project.owner","value":null,"schism":true,"heads":2}
+$ echo $?
+4
+```
+
+To resolve a schism you must get back to exactly one live head. Every path
+appends records; none rewrites the log. A single `--supersedes` edge removes
+only the one head it names, so it cannot merge two heads by itself:
+
+```text
+# Simplest: withdraw the losing claim. One head remains.
+nisaba> retract 1
+3
+
+nisaba> canon project.owner
+"bob"
+
+# Or install a new preferred claim over one head, then withdraw the other.
+nisaba> inscribe project.owner "bob" --supersedes 1
+3
+
+nisaba> canon project.owner
+schism: 2 competing claims   # heads are now 2 and 3
+
+nisaba> retract 2
+4
+
+nisaba> canon project.owner
+"bob"
+```
+
+The general rule: keep only one path of live claims. Superseding a head
+creates a new one, so pair each `--supersedes` with a `retract` of the head
+it does not cover, or retract down to a single head and re-assert.
+
 ## Build
 
 ```sh
@@ -76,19 +147,86 @@ Exit codes: `0` ok, `1` not found / no live claim, `2` usage, `3` I/O,
 
 ## Semantics
 
-- Every write appends an immutable record carrying a log-sequence id (its
-  inscription id and transaction time), a witness, and an optional
-  supersession edge.
-- A new claim supersedes the current single head automatically. `--fork`
-  adds a competing head instead, which produces a **schism** (≥2 heads).
-  `--supersedes ID` links to a specific predecessor.
-- `canon` returns the unique live head's value, `null` when nothing is
-  asserted, or reports the schism. Conflict is never silently resolved.
-- `retract ID` withdraws a prior inscription; it does not resurrect what
-  that inscription superseded.
-- `--as-of N` evaluates Canon over the log prefix up to record N.
-- Wall-clock time never decides Canon: only append order and explicit edges
-  do, so replay is deterministic.
+The rules are few and deterministic. Everything else follows from them.
+
+- **Append only.** Every write appends an immutable record carrying a
+  log-sequence id (its inscription id and its transaction time), a witness,
+  and an optional supersession edge. Nothing is ever updated in place.
+- **Canon is derived, not stored.** The current value of a key is folded from
+  the log on demand (and cached in the index, which is disposable).
+- **Supersession is a DAG.** A new claim replaces the current single head.
+  `--supersedes ID` links to a specific predecessor. `--fork` adds a second
+  live head instead of replacing, which is what creates a schism.
+- **`canon` is three-valued.** The unique live head's value; `null` when no
+  claim is live; a reported schism when two or more heads compete.
+- **Exit codes are part of the contract.** `canon` exits `4` on a schism and
+  `1` when a key has no live claim, so the ambiguity is visible to scripts.
+- **Conflict is never silently resolved.** Nisaba will not pick a winner.
+  Resolution is an explicit `inscribe --supersedes` or `retract`.
+
+## Peculiarities and sharp edges
+
+These are deliberate choices. Each one is a place where Nisaba differs from
+"just overwrite the value."
+
+1. **Newest-by-wall-clock never wins.** Canon depends only on the append
+   order (`lsn`) and explicit `supersedes` edges. Timestamps are recorded,
+   but they never decide anything, so replaying a log always yields the same
+   answer even under clock skew or equal timestamps.
+
+2. **`recorded_at` is informational.** It defaults to the wall clock at
+   append but has no authority. `--valid-time T` stores a caller-supplied
+   validity time; it is data for the caller, not an input to Canon.
+
+3. **Retraction does not resurrect.** `retract ID` withdraws that record. It
+   does *not* restore what the record superseded. If the retracted record was
+   the only live head, the key becomes `null` (exit `1`), not its predecessor.
+
+4. **Retraction wraps an existing record.** `retract ID` fails with "not
+   found" if `ID` does not exist. It appends a new record (with a new id)
+   whose target is the named one.
+
+5. **A retraction is indexed under its target's key.** Even though the
+   tombstone record is its own frame with its own id, it participates in the
+   key's chain, so `history KEY` shows both the claim and its withdrawal.
+
+6. **Forking an already-forked key stays forked.** When a key already has two
+   or more heads, a plain `inscribe` does not quietly pick a winner.
+
+7. **A `--supersedes` edge removes exactly one head.** It cannot merge two
+   competing heads into one. Resolving a two-head schism needs either a
+   `retract` of the losing head, or a `--supersedes` of one head plus a
+   `retract` of the other. Superseding a head *adds* a new head (the new
+   record), so it only reduces the head count when it retires the named one.
+
+8. **`schisms` with no competing heads is empty, not an error.** On a key
+   with one head or none, `schisms KEY` succeeds and prints nothing. It
+   errors only when the key itself is unknown.
+
+9. **Prefix scan is a byte range, not a hierarchy.** There are no namespaces
+   or shards. `scan project.` matches keys whose bytes begin with `project.`.
+   The entire key space is one ordered byte space in one log.
+
+10. **The index is a cache you may delete.** `rm memory.db.idx` loses nothing:
+    the next open rebuilds it from the log. Reads prefer the B+tree only when
+    its snapshot is exactly caught up with the log, so a stale index can never
+    change an answer.
+
+11. **Only compaction removes bytes.** Absent `compact`, no operation ever
+    destroys a recorded fact, including retraction, which is itself a record.
+    This is the headline guarantee.
+
+12. **A crash can only lose a tail.** Recovery truncates an incomplete final
+    frame. It never corrupts or rewrites earlier records, because none were
+    written in place.
+
+13. **Themed names are CLI-only.** "Inscription", "Canon", "witness", and
+    "schism" appear in the command surface. The storage code and headers use
+    ordinary names (`Record`, `Log`, `Index`, `BTree`, `KeyState`), and the
+    file format is self-describing TLV, so the theme never constrains it.
+
+14. **Canon reads are O(chain).** Resolving a key walks that key's records;
+    the index gives the chain and its head, but `--as-of` folds the prefix.
 
 ## Storage
 
