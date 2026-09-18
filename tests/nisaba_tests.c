@@ -1,9 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "nisaba.h"
 #include "internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static int g_pass;
 static int g_fail;
@@ -155,12 +158,99 @@ static void test_codec(void)
     record_free(&r);
 }
 
+static void mkrec(Record *r, uint64_t id, const char *k, const char *v)
+{
+    record_init(r);
+    r->id = id;
+    r->op = RECORD_PUT;
+    r->vtype = VAL_STR;
+    buf_set(&r->key, k, strlen(k));
+    buf_set(&r->value, v, strlen(v));
+}
+
+static int count_cb(void *ud, const Record *r, uint64_t off)
+{
+    (void)r;
+    (void)off;
+    (*(int *)ud)++;
+    return NIS_OK;
+}
+
+static void test_log(void)
+{
+    const char *p = "tests/tmp_log.db";
+    remove(p);
+
+    Log l;
+    CHECK(log_open(&l, p, 1, 0) == NIS_OK);
+    uint64_t offs[3];
+    for (uint64_t i = 1; i <= 3; i++) {
+        Record r;
+        mkrec(&r, i, "k", "v");
+        CHECK(log_append(&l, &r, &offs[i - 1]) == NIS_OK);
+        record_free(&r);
+    }
+    CHECK(l.next_lsn == 4);
+    log_close(&l);
+
+    Log l2;
+    CHECK(log_open(&l2, p, 0, 0) == NIS_OK);
+    int n = 0;
+    CHECK(log_scan(&l2, count_cb, &n) == NIS_OK);
+    CHECK(n == 3);
+    CHECK(l2.next_lsn == 4);
+
+    Record got;
+    CHECK(log_read_record(&l2, offs[2], &got) == NIS_OK);
+    CHECK(buf_eq(&got.value, "v"));
+    CHECK(got.id == 3);
+    record_free(&got);
+    log_close(&l2);
+
+    /* Append a torn suffix: it must be discarded, not accepted. */
+    FILE *f = fopen(p, "ab");
+    CHECK(f != NULL);
+    if (f) {
+        fwrite("\x41\x53\x49\x4e garbage-not-a-frame", 1, 25, f);
+        fclose(f);
+    }
+    Log l3;
+    CHECK(log_open(&l3, p, 0, 0) == NIS_OK);
+    n = 0;
+    CHECK(log_scan(&l3, count_cb, &n) == NIS_OK);
+    CHECK(n == 3);
+    CHECK(l3.next_lsn == 4);
+    struct stat st;
+    CHECK(stat(p, &st) == 0);
+    CHECK((uint64_t)st.st_size == l3.valid_len);
+    log_close(&l3);
+
+    /* Corrupt the second frame's body: the first frame survives, the rest
+     * of the log is treated as a torn tail. */
+    f = fopen(p, "r+b");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fseeko(f, (off_t)(offs[1] + FRAME_HEADER_SIZE + 3), SEEK_SET) == 0);
+        fputc(0xff, f);
+        fclose(f);
+    }
+    Log l4;
+    CHECK(log_open(&l4, p, 0, 0) == NIS_OK);
+    n = 0;
+    CHECK(log_scan(&l4, count_cb, &n) == NIS_OK);
+    CHECK(n == 1);
+    log_close(&l4);
+
+    remove(p);
+}
+
 int main(void)
 {
     test_buf();
     test_varint();
     test_crc();
     test_codec();
+    test_log();
 
     printf("tests: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
