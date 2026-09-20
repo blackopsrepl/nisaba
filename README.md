@@ -1,7 +1,7 @@
 # Nisaba
 
 <p align="center">
-  <img src="docs/images/nisaba-mascot.png" alt="Nisaba, a clay-tablet archivist holding a reed stylus" width="360">
+  <img src="docs/images/nisaba-mascot.png" alt="Nisaba holding a lapis tablet and golden reed stylus" width="360">
 </p>
 
 A tiny append-only temporal/provenance key-value database in C.
