@@ -133,6 +133,17 @@ nisaba --json memory.db canon project.status
 nisaba --format=raw memory.db canon project.status
 ```
 
+## Agent skill
+
+`skills/nisaba/SKILL.md` teaches coding agents to drive nisaba: the CLI
+contract, JSON shapes, exit codes, schism resolution recipes, and the sharp
+edges. Install it into any harness that reads `SKILL.md` skill directories:
+
+```sh
+skills/install.sh                      # every detected harness skills dir
+skills/install.sh ~/.claude/skills     # or name one: ~/.config/opencode/skills, .claude/skills, ...
+```
+
 ## Commands
 
 ```text
