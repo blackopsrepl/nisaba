@@ -349,7 +349,7 @@ static void test_btree(void)
         snprintf(kb, sizeof kb, "k%04d", i);
         KeyEntry *e = index_insert(&ix, kb, strlen(kb));
         CHECK(e != NULL);
-        e->st.head_lsn = (uint64_t)(i + 1);
+        e->st.head_lsn = (uint64_t)i + 1;
         e->st.head_count = 1;
         e->st.flags = 0;
     }

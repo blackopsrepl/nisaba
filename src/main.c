@@ -25,7 +25,6 @@ static int rc_to_exit(int rc)
     case NIS_USAGE:    return 2;
     case NIS_SCHISM:   return 4;
     case NIS_CORRUPT:  return 5;
-    case NIS_IO:       return 3;
     default:           return 3;
     }
 }
@@ -194,7 +193,7 @@ static int cmd_inscribe(Nisaba *db, int argc, char **argv, const Config *cfg)
 bad:
     record_free(&r);
     return NIS_USAGE;
-ok:
+ok: ;
 
     uint64_t id = 0;
     int rc = nis_inscribe(db, &r, &id);
@@ -347,7 +346,7 @@ static int cmd_scan(Nisaba *db, int argc, char **argv, const Config *cfg)
         }
     }
     void *ud[2] = { db, (void *)cfg };
-    return nis_scan(db, prefix, plen, limit, scan_cb_print, ud);
+    return nis_scan(db, prefix, plen, limit, scan_cb_print, (void *)ud);
 }
 
 static int cmd_retract(Nisaba *db, int argc, char **argv, const Config *cfg)
