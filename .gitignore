@@ -15,3 +15,7 @@ PLAN.md
 *.idx
 *.bak
 *.tmp
+
+# Compiler dependency files and variant build trees
+*.d
+/build/

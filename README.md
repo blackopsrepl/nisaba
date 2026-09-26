@@ -102,6 +102,10 @@ it does not cover, or retract down to a single head and re-assert.
 ```sh
 make            # builds libnisaba.a and the nisaba CLI
 make test       # runs the unit and integration tests
+make lint       # strict compile + clang-tidy (hard gate)
+make ci-local   # lint + build + test + ASan/UBSan
+make install    # bin, lib, and header into ~/.local (override with PREFIX=)
+make help       # all targets
 ```
 
 ## Use
