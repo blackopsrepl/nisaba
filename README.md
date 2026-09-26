@@ -147,7 +147,8 @@ Global options: `--json` (one JSON object per result line), `--format=raw`
 (values without quotes), `--readonly`, `--quiet`.
 
 Exit codes: `0` ok, `1` not found / no live claim, `2` usage, `3` I/O,
-`4` schism, `5` corrupt.
+`4` schism, `5` corrupt, `6` internal (out of memory or another engine
+condition the command surface does not name).
 
 ## Semantics
 

@@ -23,9 +23,20 @@ static int rc_to_exit(int rc)
     case NIS_OK:       return 0;
     case NIS_NOTFOUND: return 1;
     case NIS_USAGE:    return 2;
+    case NIS_IO:       return 3;
     case NIS_SCHISM:   return 4;
     case NIS_CORRUPT:  return 5;
-    default:           return 3;
+    /* Engine conditions the command contract does not name exit 6 so that
+     * out-of-memory and friends are never reported as i/o. */
+    case NIS_ERR:
+    case NIS_NOMEM:
+    case NIS_EXISTS:
+    case NIS_BUSY:
+        return 6;
+    default:
+        /* Off-enum results are a contract violation, not i/o: say so. */
+        fprintf(stderr, "nisaba: internal: unmapped result %d\n", rc);
+        return 6;
     }
 }
 
