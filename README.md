@@ -6,6 +6,11 @@
 
 A tiny append-only temporal/provenance key-value database in C.
 
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026
+Vittorio Distefano. The license applies to the entire repository history:
+the project was private/all-rights-reserved before this commit and is
+distributed under MIT from it onward.
+
 The append-only record log is the source of truth. The current accepted value
 of a key — the **Canon** — is a deterministic fold over that log, never a
 stored mutable field. The on-disk index is a disposable cache: delete it and
